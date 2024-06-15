@@ -1,0 +1,98 @@
+---
+title: "Steps to impute multiple columns in a data frame using recursive partitioning and regression trees method implemented in the {dlookr} R package"
+author: "Alison Felipe Alencar Chaves"
+execute:
+  echo: true
+  warning: false
+  message: false
+format: html
+code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## What our function is doing?
+1. We create a list to store the imputed columns;
+2. Loop through the columns to be imputed by applying the `dlookr::imputate_na` function from **{dlookr}** package to each column;
+3. Return the list with the imputed columns
+
+Load the necessary libraries
+
+```{r}
+library(tidyverse)
+library(dlookr)
+```
+
+## Our function to impute multiple columns requires the following arguments:
+1. data = a data frame containing the columns to be imputed and the id column;
+2. columns = the columns to be imputed. Here we use the column names from the second column to the last one;
+3. id_column = the column to be used as id (e.g., gene, protein, phosphosite, etc.);
+4. method = the method to be used for imputation. Here we use the **rpart** method, but you can use any other method available in the **{dlookr}** package.
+
+```{r}
+imputate_multiple_columns <- function(data, columns,
+                                      id_col, method = "rpart") {
+  imputation_list <- list()
+  for (i in columns) {
+    imputation_list[[i]] <- dlookr::imputate_na(data,
+                                         i, id_col,
+                                         method = method)
+  }
+  return(imputation_list)
+}
+```
+
+# Using Recursive Partitioning and Regression Trees (rpart) method to impute data
+
+```{r}
+# apply the function to the abundance data
+imputation_list <- imputate_multiple_columns(data = imputation_df,
+                                            columns = colnames(imputation_df)[2:ncol(imputation_df)],
+                                            id_col = "phosphoSite",
+                                            method = "rpart") %>%
+                                            as.data.frame() %>%
+                                            dplyr::rename_all(~ str_c("imputed_", .)) %>%
+                                            cbind(imputation_df$phosphoSite) %>%
+                                            rename("phosphoSite" = `imputation_df$phosphoSite`)
+```
+
+Combine the imputed columns with the original dataframe
+
+```{r}
+combined_data <- imputation_list %>%
+  left_join(imputation_df, by = "phosphoSite") %>%
+  gather(key = "sample", value = "abundance", 
+    -phosphoSite, na.rm = FALSE) %>%
+  dplyr::mutate(imputation_status = case_when(
+      str_detect(sample, "imputed_") ~ "imputed",
+      TRUE ~ "not imputed"),
+      imputation_status = as.factor(imputation_status),
+      sample = str_remove(sample, "imputed_"),
+      sample = as.factor(sample)
+    )
+```
+
+Plot the distribution of the imputed and not imputed data to check the imputation quality
+
+```{r}
+combined_data %>%
+    ggplot(aes(x = abundance,
+               y = sample,
+               color = imputation_status,
+               fill = imputation_status)) +
+  geom_density_ridges(
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("#D55E0050", "#0072B250"),
+      labels = c("imputed", "not imputed")) +
+  scale_color_manual(values = c("#D55E00", "#0072B2"), guide = "none") +
+  coord_cartesian(clip = "off") +
+  guides(fill = guide_legend(
+    override.aes = list(
+      fill = c("#D55E00A0", "#0072B2A0"),
+      color = NA)
+    )
+  ) +
+  labs(fill = NULL, color = NULL,
+       x = "log2(Intensity)", y = "Sample")
+```
